@@ -1,6 +1,6 @@
 [package]
 name = "chessova-desktop"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2021"
 description = "Chessova Desktop — UCI engine helper for in-browser chess review"
 default-run = "chessova-desktop"
@@ -20,9 +20,9 @@ tower-http         = { version = "0.5", features = ["cors"] }
 anyhow             = "1"
 futures-util       = "0.3"
 
-# macOS-only: menu-bar tray icon so the helper is visible while running
-# and users can right-click → Quit. Windows uses the start.bat console
-# window for the same purpose (close window to stop).
-[target.'cfg(target_os = "macos")'.dependencies]
+# Tray icon (menu bar on macOS, system tray on Windows). Drives the
+# `tray.rs` module — uses tao for the event loop because both Cocoa
+# and Win32 require their event loops on the main thread.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 tray-icon = "0.20"
 tao       = "0.31"

@@ -117,7 +117,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
   <string>$VERSION</string>
   <key>CFBundleVersion</key>
   <string>$VERSION</string>
-  <key>LSBackgroundOnly</key>
+  <key>LSUIElement</key>
   <true/>
   <key>LSMinimumSystemVersion</key>
   <string>11.0</string>
