@@ -156,6 +156,8 @@ pub async fn handle(
             multi_pv,
             depth,
             stream,
+            threads,
+            hash_mb,
         } => {
             let mut handles = Vec::new();
             let mut request_engine_ids: Vec<EngineId> = Vec::new();
@@ -220,6 +222,8 @@ pub async fn handle(
                             multi_pv,
                             depth,
                             stream,
+                            threads,
+                            hash_mb,
                             tx2.clone(),
                             Some(stop_rx),
                         )
@@ -257,24 +261,18 @@ pub async fn handle(
             engines,
             multi_pv,
             depth,
+            threads,
+            hash_mb,
         } => {
             let total = fens.len() as u32;
-            let ncpu = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(2);
-            // Cap workers at 4 and at ncpu. Each worker spawns its own
-            // Stockfish process, so num_workers * threads_per_worker is
-            // the total OS-thread budget we're handing to SF.
-            let num_workers = ncpu.min(4).max(1);
-            // Divide *full* ncpu (not sf_threads) across workers so we
-            // actually use all cores. sf_threads is ncpu-1 — leaving
-            // one core for the OS only makes sense for the *single*
-            // live engine process, not for batch where 4 workers fan
-            // out and we want every core busy.
-            let batch_threads_per_worker =
-                (ncpu / num_workers).max(1) as u32;
-            let batch_hash_per_worker =
-                (config.sf_hash_mb / num_workers as u32).max(64);
+            // Single worker for batch: one SF process runs through every
+            // position sequentially. Persistent transposition table
+            // across the whole game (adjacent positions share search
+            // trees), no oversubscription with the live engine, no
+            // multi-process memory blowup. Threads/hash come from the
+            // per-request override (settings modal) or fall back to the
+            // helper's sf_threads default (ncpu - 1).
+            let num_workers: usize = 1;
 
             let mut all_results: Vec<BatchResult> = Vec::new();
 
@@ -292,14 +290,18 @@ pub async fn handle(
                         continue;
                     }
                 };
-                // Critical perf fix: divide thread budget across workers
-                // so we don't oversubscribe the CPU. With 8 cores + 4
-                // workers we want 2 threads each, not 7 × 4 = 28.
+                // Spawn options control initial threads/hash. The
+                // per-request override (threads/hash_mb on this batch
+                // message) is applied to *every* position via setoption
+                // inside engine.analyze(), so settings changes mid-batch
+                // take effect on the next position seamlessly.
+                let initial_threads = threads.unwrap_or(config.sf_threads);
+                let initial_hash = hash_mb.unwrap_or(config.sf_hash_mb);
                 let options = batch_uci_options_for(
                     engine_id,
                     config,
-                    batch_threads_per_worker,
-                    batch_hash_per_worker,
+                    initial_threads,
+                    initial_hash,
                 );
 
                 // Contiguous chunking — adjacent positions share Stockfish's TT.
@@ -340,7 +342,17 @@ pub async fn handle(
                                 mpsc::channel::<HelperMessage>(16);
                             let req_id = format!("batch_inner_{}", idx);
                             if let Err(e) = engine
-                                .analyze(&req_id, &fen, multi_pv, depth, false, inner_tx, None)
+                                .analyze(
+                                    &req_id,
+                                    &fen,
+                                    multi_pv,
+                                    depth,
+                                    false,
+                                    threads,
+                                    hash_mb,
+                                    inner_tx,
+                                    None,
+                                )
                                 .await
                             {
                                 error!(err = %e, "batch analyze error");

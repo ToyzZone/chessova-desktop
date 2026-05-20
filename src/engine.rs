@@ -57,6 +57,11 @@ impl Engine {
     /// Streams `analyze-progress` messages; sends `analyze-done` on `bestmove`.
     /// If `stop_rx` is provided and fires, sends UCI `stop` to the engine and
     /// continues draining stdout until the engine reports `bestmove`.
+    ///
+    /// `threads_override` / `hash_mb_override` let the client tune
+    /// runtime settings per-request via UCI `setoption`. Both apply only
+    /// when present and only to Stockfish (Lc0 reads from its own
+    /// options at startup).
     pub async fn analyze(
         &mut self,
         request_id: &str,
@@ -64,6 +69,8 @@ impl Engine {
         multi_pv: u32,
         depth: u32,
         stream: bool,
+        threads_override: Option<u32>,
+        hash_mb_override: Option<u32>,
         tx: mpsc::Sender<HelperMessage>,
         stop_rx: Option<oneshot::Receiver<()>>,
     ) -> Result<()> {
@@ -76,6 +83,17 @@ impl Engine {
             ..
         } = self;
 
+        // Apply per-request overrides for Stockfish only. UCI setoption
+        // between searches is safe — the engine applies them before the
+        // next `go`. (Lc0 reads options at startup.)
+        if matches!(engine_id, EngineId::Stockfish) {
+            if let Some(t) = threads_override {
+                write_uci(stdin, &format!("setoption name Threads value {}", t)).await?;
+            }
+            if let Some(h) = hash_mb_override {
+                write_uci(stdin, &format!("setoption name Hash value {}", h)).await?;
+            }
+        }
         write_uci(stdin, &format!("setoption name MultiPV value {}", multi_pv)).await?;
         write_uci(stdin, &format!("position fen {}", fen)).await?;
         write_uci(stdin, &format!("go depth {}", depth)).await?;

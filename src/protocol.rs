@@ -105,6 +105,15 @@ pub enum ClientMessage {
         multi_pv: u32,
         depth: u32,
         stream: bool,
+        /// Optional per-request Threads override (UCI setoption). When
+        /// omitted the engine keeps its current setting. Letting the
+        /// client send this lets the settings modal change threads
+        /// without restarting the helper.
+        #[serde(default)]
+        threads: Option<u32>,
+        /// Optional per-request Hash override (MB).
+        #[serde(default, rename = "hashMb")]
+        hash_mb: Option<u32>,
     },
     AnalyzeBatch {
         id: String,
@@ -113,6 +122,10 @@ pub enum ClientMessage {
         #[serde(rename = "multiPv")]
         multi_pv: u32,
         depth: u32,
+        #[serde(default)]
+        threads: Option<u32>,
+        #[serde(default, rename = "hashMb")]
+        hash_mb: Option<u32>,
     },
     Stop {
         id: String,
