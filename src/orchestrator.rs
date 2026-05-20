@@ -266,6 +266,15 @@ pub async fn handle(
             // Stockfish process, so num_workers * threads_per_worker is
             // the total OS-thread budget we're handing to SF.
             let num_workers = ncpu.min(4).max(1);
+            // Divide *full* ncpu (not sf_threads) across workers so we
+            // actually use all cores. sf_threads is ncpu-1 — leaving
+            // one core for the OS only makes sense for the *single*
+            // live engine process, not for batch where 4 workers fan
+            // out and we want every core busy.
+            let batch_threads_per_worker =
+                (ncpu / num_workers).max(1) as u32;
+            let batch_hash_per_worker =
+                (config.sf_hash_mb / num_workers as u32).max(64);
 
             let mut all_results: Vec<BatchResult> = Vec::new();
 
@@ -286,7 +295,12 @@ pub async fn handle(
                 // Critical perf fix: divide thread budget across workers
                 // so we don't oversubscribe the CPU. With 8 cores + 4
                 // workers we want 2 threads each, not 7 × 4 = 28.
-                let options = batch_uci_options_for(engine_id, config, num_workers);
+                let options = batch_uci_options_for(
+                    engine_id,
+                    config,
+                    batch_threads_per_worker,
+                    batch_hash_per_worker,
+                );
 
                 // Contiguous chunking — adjacent positions share Stockfish's TT.
                 let chunk_size = fens.len().div_ceil(num_workers).max(1);
@@ -419,28 +433,21 @@ fn uci_options_for(id: &EngineId, config: &Config) -> Vec<(String, String)> {
     }
 }
 
-/// Batch variant: every worker spawns its own SF, so we divide the
-/// thread budget by `num_workers` to avoid CPU oversubscription. With
-/// 8 cores + 4 workers each SF gets 2 threads — total 8, matches host.
-/// Hash is per-process; we shrink it proportionally so 4 workers don't
-/// claim 4 × 512MB = 2GB of memory.
+/// Batch variant: every worker spawns its own SF, so the caller computes
+/// `threads_per_worker = ncpu / num_workers` and `hash_per_worker =
+/// sf_hash_mb / num_workers` to keep the totals at host capacity.
 fn batch_uci_options_for(
     id: &EngineId,
     config: &Config,
-    num_workers: usize,
+    threads_per_worker: u32,
+    hash_per_worker: u32,
 ) -> Vec<(String, String)> {
     match id {
         EngineId::Lc0 => uci_options_for(id, config),
-        EngineId::Stockfish => {
-            let threads_per_worker =
-                (config.sf_threads as usize).saturating_div(num_workers).max(1);
-            let hash_per_worker =
-                (config.sf_hash_mb as usize).saturating_div(num_workers).max(64);
-            vec![
-                ("Threads".into(), threads_per_worker.to_string()),
-                ("Hash".into(), hash_per_worker.to_string()),
-            ]
-        }
+        EngineId::Stockfish => vec![
+            ("Threads".into(), threads_per_worker.to_string()),
+            ("Hash".into(), hash_per_worker.to_string()),
+        ],
     }
 }
 
