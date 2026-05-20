@@ -259,9 +259,13 @@ pub async fn handle(
             depth,
         } => {
             let total = fens.len() as u32;
-            let num_workers = std::thread::available_parallelism()
-                .map(|n| n.get().min(4))
+            let ncpu = std::thread::available_parallelism()
+                .map(|n| n.get())
                 .unwrap_or(2);
+            // Cap workers at 4 and at ncpu. Each worker spawns its own
+            // Stockfish process, so num_workers * threads_per_worker is
+            // the total OS-thread budget we're handing to SF.
+            let num_workers = ncpu.min(4).max(1);
 
             let mut all_results: Vec<BatchResult> = Vec::new();
 
@@ -279,7 +283,10 @@ pub async fn handle(
                         continue;
                     }
                 };
-                let options = uci_options_for(engine_id, config);
+                // Critical perf fix: divide thread budget across workers
+                // so we don't oversubscribe the CPU. With 8 cores + 4
+                // workers we want 2 threads each, not 7 × 4 = 28.
+                let options = batch_uci_options_for(engine_id, config, num_workers);
 
                 // Contiguous chunking — adjacent positions share Stockfish's TT.
                 let chunk_size = fens.len().div_ceil(num_workers).max(1);
@@ -409,6 +416,31 @@ fn uci_options_for(id: &EngineId, config: &Config) -> Vec<(String, String)> {
             ("Threads".into(), config.sf_threads.to_string()),
             ("Hash".into(), config.sf_hash_mb.to_string()),
         ],
+    }
+}
+
+/// Batch variant: every worker spawns its own SF, so we divide the
+/// thread budget by `num_workers` to avoid CPU oversubscription. With
+/// 8 cores + 4 workers each SF gets 2 threads — total 8, matches host.
+/// Hash is per-process; we shrink it proportionally so 4 workers don't
+/// claim 4 × 512MB = 2GB of memory.
+fn batch_uci_options_for(
+    id: &EngineId,
+    config: &Config,
+    num_workers: usize,
+) -> Vec<(String, String)> {
+    match id {
+        EngineId::Lc0 => uci_options_for(id, config),
+        EngineId::Stockfish => {
+            let threads_per_worker =
+                (config.sf_threads as usize).saturating_div(num_workers).max(1);
+            let hash_per_worker =
+                (config.sf_hash_mb as usize).saturating_div(num_workers).max(64);
+            vec![
+                ("Threads".into(), threads_per_worker.to_string()),
+                ("Hash".into(), hash_per_worker.to_string()),
+            ]
+        }
     }
 }
 

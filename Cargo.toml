@@ -1,8 +1,8 @@
 [package]
 name = "chessova-desktop"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
-description = "Chessova Desktop — UCI engine helper for in-browser chess review (headless)"
+description = "Chessova Desktop — UCI engine helper for in-browser chess review"
 default-run = "chessova-desktop"
 
 [[bin]]
@@ -19,3 +19,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower-http         = { version = "0.5", features = ["cors"] }
 anyhow             = "1"
 futures-util       = "0.3"
+
+# macOS-only: menu-bar tray icon so the helper is visible while running
+# and users can right-click → Quit. Windows uses the start.bat console
+# window for the same purpose (close window to stop).
+[target.'cfg(target_os = "macos")'.dependencies]
+tray-icon = "0.20"
+tao       = "0.31"
