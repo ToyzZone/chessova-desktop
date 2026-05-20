@@ -117,12 +117,17 @@ pub fn make_hello_ack(config: &Config) -> HelperMessage {
         id: "stockfish".into(),
         name: "Stockfish".into(),
         version: None,
+        threads: Some(config.sf_threads),
+        hash_mb: Some(config.sf_hash_mb),
     }];
     if config.lc0_path.is_some() {
         engines.push(HelperEngineInfo {
             id: "lc0".into(),
             name: "Lc0".into(),
             version: None,
+            // Lc0 sets Threads=auto internally; not surfaced here.
+            threads: None,
+            hash_mb: None,
         });
     }
     HelperMessage::HelloAck {
@@ -400,7 +405,10 @@ fn uci_options_for(id: &EngineId, config: &Config) -> Vec<(String, String)> {
             }
             out
         }
-        EngineId::Stockfish => Vec::new(),
+        EngineId::Stockfish => vec![
+            ("Threads".into(), config.sf_threads.to_string()),
+            ("Hash".into(), config.sf_hash_mb.to_string()),
+        ],
     }
 }
 

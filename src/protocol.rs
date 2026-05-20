@@ -41,6 +41,13 @@ pub struct HelperEngineInfo {
     pub id: String,
     pub name: String,
     pub version: Option<String>,
+    /// Threads configured on this engine. Surfaced so the UI can show
+    /// users why the helper is so much faster than the WASM server path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threads: Option<u32>,
+    /// Hash table size in MB.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash_mb: Option<u32>,
 }
 
 /// TS: EngineId = "stockfish" | "lc0"

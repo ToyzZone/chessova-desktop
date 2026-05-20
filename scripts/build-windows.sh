@@ -43,6 +43,13 @@ SF_VERSION="sf_18"
 SF_URL="https://github.com/official-stockfish/Stockfish/releases/download/$SF_VERSION/$SF_VARIANT.zip"
 SF_ZIP="$CACHE_DIR/$SF_VARIANT.zip"
 
+# CPU-only Lc0 with DNNL backend — works on every Intel/AMD CPU without
+# requiring an NVIDIA card. ~40 MB compressed (binary + dnnl.dll + weights).
+LC0_VERSION="v0.32.1"
+LC0_VARIANT="lc0-$LC0_VERSION-windows-cpu-dnnl"
+LC0_URL="https://github.com/LeelaChessZero/lc0/releases/download/$LC0_VERSION/$LC0_VARIANT.zip"
+LC0_ZIP="$CACHE_DIR/$LC0_VARIANT.zip"
+
 echo "→ Building Chessova Desktop $VERSION (Windows x64)"
 
 # Prereq sanity checks — fail loud if the toolchain isn't ready.
@@ -77,7 +84,6 @@ fi
 # temp dir, find the .exe, rename to `stockfish.exe`. config.rs's bundled
 # lookup (current_exe() sibling) only cares about the literal filename.
 SF_TMP="$(mktemp -d)"
-trap 'rm -rf "$SF_TMP"' EXIT
 unzip -q "$SF_ZIP" -d "$SF_TMP"
 SF_EXE="$(find "$SF_TMP" -name '*.exe' -type f | head -1)"
 if [[ -z "$SF_EXE" ]]; then
@@ -85,6 +91,41 @@ if [[ -z "$SF_EXE" ]]; then
   exit 1
 fi
 cp "$SF_EXE" "$STAGE_DIR/stockfish.exe"
+
+# 2b. Lc0 (CPU-DNNL build, no GPU required). Bundles `lc0.exe`, the
+#     DNNL runtime DLL, mimalloc DLLs, and the default network weights
+#     renamed to lc0-weights.pb.gz so config.rs picks them up.
+if [[ ! -f "$LC0_ZIP" ]]; then
+  echo "→ Downloading $LC0_VARIANT"
+  curl -fSL --retry 3 -o "$LC0_ZIP.tmp" "$LC0_URL"
+  mv "$LC0_ZIP.tmp" "$LC0_ZIP"
+fi
+
+LC0_TMP="$(mktemp -d)"
+trap 'rm -rf "$LC0_TMP" "${SF_TMP:-}"' EXIT
+unzip -q "$LC0_ZIP" -d "$LC0_TMP"
+
+LC0_EXE="$(find "$LC0_TMP" -name 'lc0.exe' -type f | head -1)"
+if [[ -z "$LC0_EXE" ]]; then
+  echo "✗ No lc0.exe in $LC0_ZIP" >&2
+  exit 1
+fi
+LC0_BUNDLE_DIR="$(dirname "$LC0_EXE")"
+
+cp "$LC0_BUNDLE_DIR/lc0.exe" "$STAGE_DIR/lc0.exe"
+# Copy DLL deps next to lc0.exe — Windows resolves them from cwd.
+for dll in "$LC0_BUNDLE_DIR"/*.dll; do
+  [[ -f "$dll" ]] || continue
+  cp "$dll" "$STAGE_DIR/"
+done
+# Pick up the weights file (single .pb.gz in the zip). Rename to the
+# canonical name config.rs probes for.
+LC0_WEIGHTS="$(find "$LC0_BUNDLE_DIR" -maxdepth 1 -name '*.pb.gz' -type f | head -1)"
+if [[ -z "$LC0_WEIGHTS" ]]; then
+  echo "✗ No Lc0 weights (.pb.gz) in $LC0_ZIP" >&2
+  exit 1
+fi
+cp "$LC0_WEIGHTS" "$STAGE_DIR/lc0-weights.pb.gz"
 
 # 3. start.bat — launches helper with a console window so users can see
 # logs and know the helper is running. They close the window to stop it.
@@ -124,6 +165,10 @@ First-launch warning:
 Files:
   chessova-desktop.exe   The helper (Rust, ~6 MB)
   stockfish.exe          Stockfish 18 ($SF_VARIANT)
+  lc0.exe                Lc0 $LC0_VERSION (CPU-DNNL build, no GPU required)
+  lc0-weights.pb.gz      Default Lc0 neural network weights
+  dnnl.dll               Intel DNNL runtime used by Lc0
+  mimalloc-*.dll         Memory allocator used by Lc0
   start.bat              Launcher
   README.txt             This file
 EOF

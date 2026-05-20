@@ -1,6 +1,6 @@
 [package]
 name = "chessova-desktop"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Chessova Desktop — UCI engine helper for in-browser chess review (headless)"
 default-run = "chessova-desktop"

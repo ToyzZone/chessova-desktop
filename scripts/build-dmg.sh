@@ -43,7 +43,9 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 DMG_NAME="Chessova-Desktop-$VERSION-arm64.dmg"
 
 echo "→ Building $APP_NAME $VERSION (arm64)"
-rm -rf "$DIST_DIR"
+# Clean only this script's own artifacts so a sibling build-windows.sh
+# zip sitting alongside doesn't get wiped on every macOS rebuild.
+rm -rf "$APP_DIR" "$DIST_DIR/dmg-staging" "$DIST_DIR/$DMG_NAME"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 # 1. Compile arm64
@@ -55,8 +57,8 @@ OUT_BIN="$MACOS_DIR/$EXE_NAME"
 cp "$TARGET_ARM" "$OUT_BIN"
 chmod +x "$OUT_BIN"
 
-# 3. Bundle Stockfish next to the helper. config.rs auto-resolves it
-#    from the same directory as the running executable.
+# 3a. Bundle Stockfish next to the helper. config.rs auto-resolves it
+#     from the same directory as the running executable.
 STOCKFISH_SRC="${STOCKFISH_SRC:-/opt/homebrew/bin/stockfish}"
 if [[ ! -f "$STOCKFISH_SRC" ]]; then
   STOCKFISH_SRC="/usr/local/bin/stockfish"
@@ -68,6 +70,29 @@ fi
 echo "→ Bundling Stockfish from $STOCKFISH_SRC"
 cp "$STOCKFISH_SRC" "$MACOS_DIR/stockfish"
 chmod +x "$MACOS_DIR/stockfish"
+
+# 3b. Bundle Lc0 (binary + weights). Brew installs the real binary under
+#     libexec/ with a shell wrapper in bin/. We need the libexec one to
+#     avoid the wrapper's hard-coded Cellar path. config.rs picks it up
+#     via current_exe() sibling lookup; weights named lc0-weights.pb.gz.
+LC0_BREW_PREFIX="$(brew --prefix lc0 2>/dev/null || true)"
+if [[ -z "$LC0_BREW_PREFIX" ]] || [[ ! -d "$LC0_BREW_PREFIX/libexec" ]]; then
+  echo "⚠ Lc0 not installed via Homebrew — skipping Lc0 bundle."
+  echo "  Install with: brew install lc0"
+else
+  LC0_BIN="$LC0_BREW_PREFIX/libexec/lc0"
+  LC0_WEIGHTS="$(find "$LC0_BREW_PREFIX/libexec" -name '*.pb.gz' -type f | head -1)"
+  if [[ -f "$LC0_BIN" ]] && [[ -n "$LC0_WEIGHTS" ]]; then
+    echo "→ Bundling Lc0 from $LC0_BIN"
+    cp "$LC0_BIN" "$MACOS_DIR/lc0"
+    # Weights go in Resources/ so codesign --deep can sign the binaries
+    # without choking on non-executable blobs. config.rs probes both.
+    cp "$LC0_WEIGHTS" "$RESOURCES_DIR/lc0-weights.pb.gz"
+    chmod +x "$MACOS_DIR/lc0"
+  else
+    echo "⚠ Lc0 binary or weights missing under $LC0_BREW_PREFIX/libexec — skipping"
+  fi
+fi
 
 # 4. Info.plist — LSBackgroundOnly so the app runs headless without
 #    grabbing a Dock icon. CFBundleExecutable points at our helper.
@@ -112,6 +137,10 @@ SIGN_ID="${APPLE_DEV_ID:--}"  # - means ad-hoc
 echo "→ Code signing with identity: $SIGN_ID"
 codesign --force --sign "$SIGN_ID" --timestamp=none --options=runtime \
   "$MACOS_DIR/stockfish"
+if [[ -f "$MACOS_DIR/lc0" ]]; then
+  codesign --force --sign "$SIGN_ID" --timestamp=none --options=runtime \
+    "$MACOS_DIR/lc0"
+fi
 codesign --force --sign "$SIGN_ID" --timestamp=none --options=runtime \
   "$OUT_BIN"
 codesign --force --sign "$SIGN_ID" --timestamp=none --options=runtime \
