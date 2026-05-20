@@ -119,6 +119,7 @@ pub fn make_hello_ack(config: &Config) -> HelperMessage {
         version: None,
         threads: Some(config.sf_threads),
         hash_mb: Some(config.sf_hash_mb),
+        batch_workers: Some(config.sf_batch_workers),
     }];
     if config.lc0_path.is_some() {
         engines.push(HelperEngineInfo {
@@ -128,6 +129,7 @@ pub fn make_hello_ack(config: &Config) -> HelperMessage {
             // Lc0 sets Threads=auto internally; not surfaced here.
             threads: None,
             hash_mb: None,
+            batch_workers: None,
         });
     }
     HelperMessage::HelloAck {
@@ -263,16 +265,18 @@ pub async fn handle(
             depth,
             threads,
             hash_mb,
+            workers,
         } => {
             let total = fens.len() as u32;
-            // Single worker for batch: one SF process runs through every
-            // position sequentially. Persistent transposition table
-            // across the whole game (adjacent positions share search
-            // trees), no oversubscription with the live engine, no
-            // multi-process memory blowup. Threads/hash come from the
-            // per-request override (settings modal) or fall back to the
-            // helper's sf_threads default (ncpu - 1).
-            let num_workers: usize = 1;
+            // Worker count comes from client override (settings modal /
+            // preset) or falls back to helper auto (config.sf_batch_workers).
+            // Clamp to [1, ncpu] so a runaway client value can't blow up
+            // the machine.
+            let ncpu = std::thread::available_parallelism()
+                .map(|n| n.get() as u32)
+                .unwrap_or(2);
+            let requested_workers = workers.unwrap_or(config.sf_batch_workers);
+            let num_workers: usize = requested_workers.clamp(1, ncpu).max(1) as usize;
 
             let mut all_results: Vec<BatchResult> = Vec::new();
 
@@ -290,18 +294,25 @@ pub async fn handle(
                         continue;
                     }
                 };
-                // Spawn options control initial threads/hash. The
-                // per-request override (threads/hash_mb on this batch
-                // message) is applied to *every* position via setoption
-                // inside engine.analyze(), so settings changes mid-batch
-                // take effect on the next position seamlessly.
-                let initial_threads = threads.unwrap_or(config.sf_threads);
-                let initial_hash = hash_mb.unwrap_or(config.sf_hash_mb);
+                // Spawn options divide the user's thread/hash budget
+                // across the parallel workers. With 8 cores + 4 workers
+                // each SF gets 2 threads × 128 MB hash = 8 threads, 512
+                // MB total. Same shape as 1 × 8 × 512 MB but parallel.
+                //
+                // The per-position override inside engine.analyze() is
+                // also divided so mid-batch settings changes track the
+                // same per-worker math.
+                let total_threads = threads.unwrap_or(config.sf_threads);
+                let total_hash = hash_mb.unwrap_or(config.sf_hash_mb);
+                let per_worker_threads =
+                    (total_threads / num_workers as u32).max(1);
+                let per_worker_hash =
+                    (total_hash / num_workers as u32).max(64);
                 let options = batch_uci_options_for(
                     engine_id,
                     config,
-                    initial_threads,
-                    initial_hash,
+                    per_worker_threads,
+                    per_worker_hash,
                 );
 
                 // Contiguous chunking — adjacent positions share Stockfish's TT.
@@ -341,6 +352,9 @@ pub async fn handle(
                             let (inner_tx, mut inner_rx) =
                                 mpsc::channel::<HelperMessage>(16);
                             let req_id = format!("batch_inner_{}", idx);
+                            // Pass the per-worker thread/hash split,
+                            // not the user's total budget — see the
+                            // comment above num_workers for why.
                             if let Err(e) = engine
                                 .analyze(
                                     &req_id,
@@ -348,8 +362,8 @@ pub async fn handle(
                                     multi_pv,
                                     depth,
                                     false,
-                                    threads,
-                                    hash_mb,
+                                    Some(per_worker_threads),
+                                    Some(per_worker_hash),
                                     inner_tx,
                                     None,
                                 )

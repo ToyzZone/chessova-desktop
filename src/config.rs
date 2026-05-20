@@ -12,6 +12,12 @@ pub struct Config {
     /// more positions. 512MB is a sweet spot for desktops in 2026.
     /// Override via SF_HASH_MB.
     pub sf_hash_mb: u32,
+    /// Number of parallel batch workers. Each spawns its own SF process
+    /// and analyzes a slice of positions concurrently with the others.
+    /// Defaults to `min(4, max(1, ncpu / 2))` so a 2-core sees 1 worker,
+    /// 4-core → 2, 8-core → 4, 16-core → 4 (capped). Override via
+    /// SF_BATCH_WORKERS.
+    pub sf_batch_workers: u32,
 }
 
 impl Config {
@@ -36,8 +42,23 @@ impl Config {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(512),
+            sf_batch_workers: std::env::var("SF_BATCH_WORKERS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_batch_workers),
         }
     }
+}
+
+/// Auto worker count: `min(4, max(1, ncpu / 2))`. Cap at 4 because each
+/// extra worker spawns a full SF process with its own hash table —
+/// memory cost grows linearly. Below 8 cores we go fewer workers so
+/// each gets at least 2 threads.
+fn default_batch_workers() -> u32 {
+    let n = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(4);
+    (n / 2).clamp(1, 4)
 }
 
 /// ncpu - 1, capped to [1, 16]. We leave one core for the OS and browser

@@ -48,6 +48,11 @@ pub struct HelperEngineInfo {
     /// Hash table size in MB.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash_mb: Option<u32>,
+    /// Auto-computed parallel batch worker count (Stockfish only).
+    /// Lets the settings modal show "Auto (4 workers)" alongside the
+    /// thread auto count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_workers: Option<u32>,
 }
 
 /// TS: EngineId = "stockfish" | "lc0"
@@ -126,6 +131,10 @@ pub enum ClientMessage {
         threads: Option<u32>,
         #[serde(default, rename = "hashMb")]
         hash_mb: Option<u32>,
+        /// Override parallel worker count for this batch. Omit to use
+        /// the helper's auto value (config.sf_batch_workers).
+        #[serde(default)]
+        workers: Option<u32>,
     },
     Stop {
         id: String,
