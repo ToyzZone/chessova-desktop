@@ -110,15 +110,22 @@ pub enum ClientMessage {
         multi_pv: u32,
         depth: u32,
         stream: bool,
-        /// Optional per-request Threads override (UCI setoption). When
-        /// omitted the engine keeps its current setting. Letting the
-        /// client send this lets the settings modal change threads
-        /// without restarting the helper.
+        /// Stockfish runtime overrides (UCI setoption applied per
+        /// request). Ignored by Lc0.
         #[serde(default)]
         threads: Option<u32>,
-        /// Optional per-request Hash override (MB).
         #[serde(default, rename = "hashMb")]
         hash_mb: Option<u32>,
+        /// Lc0 runtime overrides. Applied via UCI setoption to the Lc0
+        /// engine when present. Stockfish ignores them.
+        #[serde(default, rename = "lc0Backend")]
+        lc0_backend: Option<String>,
+        #[serde(default, rename = "lc0Threads")]
+        lc0_threads: Option<u32>,
+        #[serde(default, rename = "lc0NnCache")]
+        lc0_nn_cache: Option<u32>,
+        #[serde(default, rename = "lc0Minibatch")]
+        lc0_minibatch: Option<u32>,
     },
     AnalyzeBatch {
         id: String,
@@ -131,10 +138,16 @@ pub enum ClientMessage {
         threads: Option<u32>,
         #[serde(default, rename = "hashMb")]
         hash_mb: Option<u32>,
-        /// Override parallel worker count for this batch. Omit to use
-        /// the helper's auto value (config.sf_batch_workers).
         #[serde(default)]
         workers: Option<u32>,
+        #[serde(default, rename = "lc0Backend")]
+        lc0_backend: Option<String>,
+        #[serde(default, rename = "lc0Threads")]
+        lc0_threads: Option<u32>,
+        #[serde(default, rename = "lc0NnCache")]
+        lc0_nn_cache: Option<u32>,
+        #[serde(default, rename = "lc0Minibatch")]
+        lc0_minibatch: Option<u32>,
     },
     Stop {
         id: String,

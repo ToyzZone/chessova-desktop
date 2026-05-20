@@ -5,7 +5,7 @@ use tracing::{error, info};
 
 use crate::{
     config::Config,
-    engine::Engine,
+    engine::{Engine, Lc0Overrides},
     protocol::{BatchResult, ClientMessage, EngineId, HelperEngineInfo, HelperMessage},
 };
 
@@ -160,7 +160,17 @@ pub async fn handle(
             stream,
             threads,
             hash_mb,
+            lc0_backend,
+            lc0_threads,
+            lc0_nn_cache,
+            lc0_minibatch,
         } => {
+            let lc0_overrides = Lc0Overrides {
+                backend: lc0_backend,
+                threads: lc0_threads,
+                nn_cache: lc0_nn_cache,
+                minibatch: lc0_minibatch,
+            };
             let mut handles = Vec::new();
             let mut request_engine_ids: Vec<EngineId> = Vec::new();
 
@@ -215,6 +225,7 @@ pub async fn handle(
                 let state2 = state.clone();
                 let engine_id2 = engine_id.clone();
 
+                let lc0_overrides_clone = lc0_overrides.clone();
                 handles.push(tokio::spawn(async move {
                     let mut eng = engine_arc.lock().await;
                     let result = eng
@@ -226,6 +237,7 @@ pub async fn handle(
                             stream,
                             threads,
                             hash_mb,
+                            lc0_overrides_clone,
                             tx2.clone(),
                             Some(stop_rx),
                         )
@@ -266,7 +278,17 @@ pub async fn handle(
             threads,
             hash_mb,
             workers,
+            lc0_backend,
+            lc0_threads,
+            lc0_nn_cache,
+            lc0_minibatch,
         } => {
+            let lc0_overrides = Lc0Overrides {
+                backend: lc0_backend,
+                threads: lc0_threads,
+                nn_cache: lc0_nn_cache,
+                minibatch: lc0_minibatch,
+            };
             let total = fens.len() as u32;
             // Worker count comes from client override (settings modal /
             // preset) or falls back to helper auto (config.sf_batch_workers).
@@ -337,6 +359,7 @@ pub async fn handle(
                     let engine_id2 = engine_id.clone();
                     let options2 = options.clone();
                     let result_tx2 = result_tx.clone();
+                    let lc0_overrides_for_worker = lc0_overrides.clone();
 
                     tokio::spawn(async move {
                         let mut engine =
@@ -364,6 +387,7 @@ pub async fn handle(
                                     false,
                                     Some(per_worker_threads),
                                     Some(per_worker_hash),
+                                    lc0_overrides_for_worker.clone(),
                                     inner_tx,
                                     None,
                                 )
@@ -450,6 +474,25 @@ fn uci_options_for(id: &EngineId, config: &Config) -> Vec<(String, String)> {
             if let Some(weights) = &config.lc0_weights {
                 out.push(("WeightsFile".to_string(), weights.clone()));
             }
+            // Perf tuning. Without these Lc0 uses defaults that
+            // under-utilize a modern CPU.
+            //
+            // Threads: same budget as Stockfish (ncpu - 1, capped 16).
+            // For CPU backends (DNNL on Windows, eigen fallback) more
+            // threads = ~linear speedup until cache saturation. Metal
+            // on macOS ignores Threads but accepts the option harmlessly.
+            //
+            // NNCacheSize: cache of evaluated positions. Default 200_000
+            // is tiny — bumping to 2_000_000 costs ~80 MB RAM and gives
+            // big repeated-position speedup during analysis (positions
+            // repeat constantly inside a search tree).
+            //
+            // MinibatchSize: batch size for NN evaluation. For CPU
+            // backends a small batch (8-16) keeps latency low. For GPU
+            // (Metal/CUDA) a bigger batch (256+) is faster — Lc0 picks
+            // a sensible default per backend, so we leave it.
+            out.push(("Threads".to_string(), config.sf_threads.to_string()));
+            out.push(("NNCacheSize".to_string(), "2000000".to_string()));
             out
         }
         EngineId::Stockfish => vec![

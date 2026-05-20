@@ -8,6 +8,16 @@ use tracing::{debug, warn};
 
 use crate::protocol::{EngineLine, HelperMessage, EngineId};
 
+/// Per-request Lc0 setoption overrides. All None ⇒ engine keeps its
+/// startup-configured values. Only consumed when `engine_id == Lc0`.
+#[derive(Debug, Clone, Default)]
+pub struct Lc0Overrides {
+    pub backend: Option<String>,
+    pub threads: Option<u32>,
+    pub nn_cache: Option<u32>,
+    pub minibatch: Option<u32>,
+}
+
 pub struct Engine {
     engine_id: EngineId,
     child: Child,
@@ -71,6 +81,7 @@ impl Engine {
         stream: bool,
         threads_override: Option<u32>,
         hash_mb_override: Option<u32>,
+        lc0_overrides: Lc0Overrides,
         tx: mpsc::Sender<HelperMessage>,
         stop_rx: Option<oneshot::Receiver<()>>,
     ) -> Result<()> {
@@ -83,15 +94,36 @@ impl Engine {
             ..
         } = self;
 
-        // Apply per-request overrides for Stockfish only. UCI setoption
-        // between searches is safe — the engine applies them before the
-        // next `go`. (Lc0 reads options at startup.)
-        if matches!(engine_id, EngineId::Stockfish) {
-            if let Some(t) = threads_override {
-                write_uci(stdin, &format!("setoption name Threads value {}", t)).await?;
+        // Per-request UCI setoption — applied between searches so the
+        // engine picks them up on the next `go`. SF and Lc0 share Threads
+        // semantically but use it differently; we send the engine-
+        // appropriate value.
+        match engine_id {
+            EngineId::Stockfish => {
+                if let Some(t) = threads_override {
+                    write_uci(stdin, &format!("setoption name Threads value {}", t)).await?;
+                }
+                if let Some(h) = hash_mb_override {
+                    write_uci(stdin, &format!("setoption name Hash value {}", h)).await?;
+                }
             }
-            if let Some(h) = hash_mb_override {
-                write_uci(stdin, &format!("setoption name Hash value {}", h)).await?;
+            EngineId::Lc0 => {
+                // Lc0 accepts setoption mid-session for these. Backend
+                // changes trigger an internal re-initialization.
+                if let Some(b) = &lc0_overrides.backend {
+                    if !b.is_empty() && b != "auto" {
+                        write_uci(stdin, &format!("setoption name Backend value {}", b)).await?;
+                    }
+                }
+                if let Some(t) = lc0_overrides.threads {
+                    write_uci(stdin, &format!("setoption name Threads value {}", t)).await?;
+                }
+                if let Some(c) = lc0_overrides.nn_cache {
+                    write_uci(stdin, &format!("setoption name NNCacheSize value {}", c)).await?;
+                }
+                if let Some(m) = lc0_overrides.minibatch {
+                    write_uci(stdin, &format!("setoption name MinibatchSize value {}", m)).await?;
+                }
             }
         }
         write_uci(stdin, &format!("setoption name MultiPV value {}", multi_pv)).await?;
