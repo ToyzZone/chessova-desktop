@@ -10,9 +10,9 @@ pub enum WeightsChoiceId {
     T1_256,
     T1_512,
     BT4,
-    Maia1100,
-    Maia1500,
-    Maia1900,
+    // Maia models (rating-bucketed human-style play) deferred — they
+    // cap at 1900 ELO and Maia-2 isn't Lc0-drop-in compatible. Revisit
+    // when there's a clean way to ship rating-conditioned play.
 }
 
 #[derive(Debug, Clone)]
@@ -45,24 +45,6 @@ pub const CATALOG: &[WeightsChoice] = &[
         label: "BT4 · very strong, ~350 MB · GPU recommended",
         url: "https://storage.lczero.org/files/networks-contrib/BT4-1024x15x32h-swa-6147500.pb.gz",
         approx_mb: 350,
-    },
-    WeightsChoice {
-        id: WeightsChoiceId::Maia1100,
-        label: "Maia 1100 · plays like 1100-rated human · ~30 MB",
-        url: "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1100.pb.gz",
-        approx_mb: 30,
-    },
-    WeightsChoice {
-        id: WeightsChoiceId::Maia1500,
-        label: "Maia 1500 · plays like 1500-rated human · ~30 MB",
-        url: "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1500.pb.gz",
-        approx_mb: 30,
-    },
-    WeightsChoice {
-        id: WeightsChoiceId::Maia1900,
-        label: "Maia 1900 · plays like 1900-rated human · ~30 MB",
-        url: "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1900.pb.gz",
-        approx_mb: 30,
     },
 ];
 
