@@ -1,0 +1,7 @@
+target/
+gen-src/
+dist/
+.cache/
+*.dmg
+*.zip
+*.app

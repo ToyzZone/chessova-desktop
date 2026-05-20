@@ -1,0 +1,6 @@
+# Cross-compile config for the Windows builder. Required because Cargo
+# can't autodetect a non-host linker — we route the Windows target through
+# MinGW's GCC, installed via `brew install mingw-w64`.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"
