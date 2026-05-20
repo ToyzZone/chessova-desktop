@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::install_paths;
+
 pub struct Config {
     pub stockfish_path: String,
     pub lc0_path: Option<String>,
@@ -24,14 +26,16 @@ impl Config {
     pub fn from_env() -> Self {
         Self {
             stockfish_path: std::env::var("STOCKFISH_PATH")
-                .unwrap_or_else(|_| default_path("stockfish")),
+                .unwrap_or_else(|_| default_path(stockfish_filename())),
             lc0_path: std::env::var("LC0_PATH")
                 .ok()
-                .or_else(|| bundled_path("lc0"))
+                .or_else(|| bundled_path(lc0_filename()))
+                .or_else(|| user_installed_path(lc0_filename()))
                 .or_else(|| auto_detect("lc0")),
             lc0_weights: std::env::var("LC0_WEIGHTS")
                 .ok()
-                .or_else(|| bundled_weights_path()),
+                .or_else(|| bundled_weights_path())
+                .or_else(|| user_installed_weights_path()),
             bind_addr: std::env::var("BIND_ADDR")
                 .unwrap_or_else(|_| "127.0.0.1:9876".into()),
             sf_threads: std::env::var("SF_THREADS")
@@ -94,9 +98,60 @@ fn bundled_weights_path() -> Option<String> {
 }
 
 fn default_path(bin: &str) -> String {
+    // Resolution order: bundled (next to current_exe), then user-install
+    // dir (populated by the one-click installer), then Homebrew, then a
+    // bare name (last resort — works only if `bin` is on PATH).
     bundled_path(bin)
+        .or_else(|| user_installed_path(bin))
         .or_else(|| auto_detect(bin))
         .unwrap_or_else(|| bin.into())
+}
+
+/// Probe `~/Library/Application Support/Chessova/engines/<bin>` (and
+/// platform equivalents). Populated by the installer when the user
+/// clicks "Install Stockfish" / "Install Lc0" in the tray menu.
+fn user_installed_path(bin: &str) -> Option<String> {
+    let dir = install_paths::user_engines_dir()?;
+    let candidate = dir.join(bin);
+    if candidate.is_file() {
+        candidate.into_os_string().into_string().ok()
+    } else {
+        None
+    }
+}
+
+fn user_installed_weights_path() -> Option<String> {
+    let dir = install_paths::user_engines_dir()?;
+    for name in &["lc0-weights.pb.gz", "lc0-weights.pb"] {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return candidate.into_os_string().into_string().ok();
+        }
+    }
+    None
+}
+
+/// Platform-correct filename for Stockfish so probes hit the right file.
+fn stockfish_filename() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "stockfish.exe"
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "stockfish"
+    }
+}
+
+fn lc0_filename() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "lc0.exe"
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "lc0"
+    }
 }
 
 /// Look for `bin` next to the running binary. When the helper ships as a

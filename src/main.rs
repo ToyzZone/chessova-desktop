@@ -1,9 +1,15 @@
 mod config;
 mod engine;
 mod engine_status;
+mod install_paths;
+mod installer;
+mod lc0_weights;
 mod orchestrator;
 mod protocol;
 mod ws_server;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod progress_window;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod tray;
@@ -36,39 +42,40 @@ fn main() -> anyhow::Result<()> {
         "Chessova Desktop helper starting"
     );
 
-    // Tokio runtime + WebSocket server on a background thread so the
-    // main thread is free to run the OS event loop (Cocoa / Win32 both
-    // require their event loops on the main thread).
+    // Build the tokio runtime explicitly so we can hand its Handle to
+    // the tray module — install jobs are tokio tasks but the tray
+    // event loop owns the main thread.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| anyhow::anyhow!("tokio runtime build failed: {}", e))?;
+    let handle = runtime.handle().clone();
+
+    // WebSocket server on a background tokio task.
     let config_for_ws = config.clone();
-    std::thread::spawn(move || {
-        let runtime = match tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                warn!(err = %e, "failed to build tokio runtime");
-                return;
-            }
-        };
-        if let Err(e) = runtime.block_on(ws_server::serve(config_for_ws)) {
+    runtime.spawn(async move {
+        if let Err(e) = ws_server::serve(config_for_ws).await {
             warn!(err = %e, "ws server exited with error");
         }
     });
 
-    // Main thread: tray icon event loop. Blocks until Quit is selected.
-    // Quit calls std::process::exit, which terminates the whole process
-    // including the background WS thread.
+    // Keep the runtime alive on a dedicated thread (its destructor
+    // would otherwise shut down tasks when `runtime` is dropped).
+    std::thread::spawn(move || {
+        runtime.block_on(std::future::pending::<()>());
+    });
+
+    // Main thread: tray icon event loop. Blocks until Quit selected.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        if let Err(e) = tray::run(status) {
+        if let Err(e) = tray::run(status, handle) {
             warn!(err = %e, "tray icon failed to start; running headless");
             std::thread::park();
         }
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        // Linux / other: no tray icon yet, park the main thread forever.
+        let _ = handle;
         std::thread::park();
     }
 
